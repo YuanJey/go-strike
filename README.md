@@ -9,6 +9,14 @@
 ```
 github.com/YuanJey/go-strike
 ├── types.go               # 核心类型（Side、PositionSide、RoundMode、基础错误）
+├── indicator/             # 常见技术指标与基础滚动算子
+│   ├── moving_average.go  # SMA/EMA/RMA/WMA
+│   ├── volatility.go      # True Range/ATR/标准差/布林带
+│   ├── momentum.go        # RSI/ROC
+│   ├── trend.go           # MACD/唐奇安通道/超级趋势
+│   ├── volume.go          # VWAP/OBV
+│   ├── order_flow.go      # 单交易所/多交易所 CVD
+│   └── open_interest.go   # 单交易所/多交易所 OI
 ├── precision/             # 金融级精度对齐模块
 │   ├── round.go           # TickSize/StepSize 步长规范化与 MinNotional 校验
 │   └── round_test.go
@@ -156,9 +164,95 @@ if result.Triggered {
 }
 ```
 
+### 6. 常见技术指标 (Indicator)
+
+```go
+closes := []decimal.Decimal{
+    decimal.NewFromInt(100),
+    decimal.NewFromInt(102),
+    decimal.NewFromInt(101),
+    decimal.NewFromInt(105),
+    decimal.NewFromInt(108),
+}
+
+rsi, err := indicator.RSI(closes, 3)
+if err != nil {
+    panic(err)
+}
+
+// Series 与输入等长，Start 表示首个有效值下标。
+latestRSI, ready := rsi.At(len(closes) - 1)
+if ready {
+    fmt.Printf("RSI: %s\n", latestRSI)
+}
+
+bands, _ := indicator.BollingerBands(
+    closes,
+    3,
+    decimal.NewFromInt(2),
+)
+latestUpper, _ := bands.Upper.At(len(closes) - 1)
+fmt.Printf("Bollinger upper: %s\n", latestUpper)
+```
+
+### 7. CVD 与 OI
+
+```go
+cvd, err := indicator.CVD([]indicator.TradeFlowPoint{
+    {
+        Timestamp:  1710000000000,
+        BuyVolume:  decimal.NewFromInt(120),
+        SellVolume: decimal.NewFromInt(80),
+    },
+}, decimal.Zero)
+if err != nil {
+    panic(err)
+}
+fmt.Printf("CVD: %s\n", cvd.Cumulative.Values[0])
+
+globalOI, err := indicator.MultiExchangeOI(
+    []indicator.ExchangeOISeries{
+        {
+            Exchange: "binance",
+            Points: []indicator.OIPoint{
+                {Timestamp: 1710000000000, Value: decimal.NewFromInt(1_000_000)},
+            },
+        },
+        {
+            Exchange: "okx",
+            Points: []indicator.OIPoint{
+                {Timestamp: 1710000000000, Value: decimal.NewFromInt(500_000)},
+            },
+        },
+    },
+    indicator.OIAggregationOptions{},
+)
+if err != nil {
+    panic(err)
+}
+fmt.Printf("Global OI: %s\n", globalOI.Value.Values[0])
+```
+
+多交易所计算要求调用方先将成交量和 OI 转换到同一单位。CVD 缺失桶不做前向填充；OI 使用最近快照，并可通过 `MaxStalenessMillis` 限制快照陈旧时间。
+
 ---
 
 ## 📝 变更日志 (Changelog & Traceability)
+
+### [v0.4.0] - 2026-10-19
+- **新增指标模块**:
+  - `indicator/moving_average.go`: 提供 SMA、EMA、Wilder RMA 与线性 WMA。
+  - `indicator/volatility.go`: 提供 True Range、ATR、滚动总体标准差与布林带。
+  - `indicator/momentum.go`: 提供 RSI 与百分比 ROC。
+  - `indicator/trend.go`: 提供 MACD、唐奇安通道与基于 Wilder ATR 的超级趋势。
+  - `indicator/volume.go`: 提供累计 VWAP 与 OBV。
+  - `indicator/order_flow.go`: 提供单交易所 CVD 与多交易所主动成交量聚合。
+  - `indicator/open_interest.go`: 提供单交易所 OI 变化率与支持陈旧时间控制的多交易所 OI 聚合。
+- **统一序列语义**:
+  - 所有批量指标返回与输入等长的 `Series`，通过 `Start` 和 `At` 明确预热期。
+  - 全部计算使用 `decimal.Decimal`，不依赖交易所 API 或交易执行状态。
+- **质量保证**:
+  - 覆盖公式结果、预热下标、无涨跌 RSI、零成交量、非法周期与非法 K 线等边界测试。
 
 ### [v0.3.0] - 2026-10-15
 - **核心算法升级**:
@@ -192,5 +286,3 @@ if result.Triggered {
   - 全模块单元测试覆盖与边界值校验。
   - 启用 `-race` 竞态检测器验证多协程行情推送下的并发安全性。
 - **影响范围**: 新增全库基础代码与算法引擎，无历史破坏性变更。
-
-
