@@ -29,6 +29,7 @@ github.com/YuanJey/go-strike
 │   ├── risk_fractional.go # 固定风险比例模型 (Fixed Fractional Risk Sizing)
 │   ├── kelly.go           # 经典凯利公式与分数凯利 (Fractional Kelly)
 │   ├── atr_sizing.go      # ATR 波动率自适应平价仓位
+│   ├── martingale_risk.go # 最大亏损反推马丁基础仓位
 │   └── sizing_test.go
 └── execution/             # 分批开仓与委托执行算法
     ├── grid.go            # 算术等差网格与几何等比网格生成器
@@ -235,9 +236,54 @@ fmt.Printf("Global OI: %s\n", globalOI.Value.Values[0])
 
 多交易所计算要求调用方先将成交量和 OI 转换到同一单位。CVD 缺失桶不做前向填充；OI 使用最近快照，并可通过 `MaxStalenessMillis` 限制快照陈旧时间。
 
+### 8. 马丁策略风险反推
+
+```go
+plan, err := sizing.MartingaleRiskSizing(sizing.MartingaleRiskConfig{
+    Side:             strike.PositionSideLong,
+    EntryPrice:       decimal.NewFromInt(100),
+    StopLossPrice:    decimal.NewFromInt(85),
+    PriceStep:        decimal.NewFromInt(5),
+    VolumeMultiplier: decimal.NewFromInt(2),
+    MaxLoss:          decimal.NewFromInt(1000),
+    QuantityStep:     decimal.NewFromFloat(0.001),
+})
+if err != nil {
+    panic(err)
+}
+
+fmt.Printf(
+    "基础仓位: %s, 层数: %d, 止损预计亏损: %s\n",
+    plan.BaseQuantity,
+    plan.Rounds,
+    plan.EstimatedMaxLoss,
+)
+for _, step := range plan.Steps {
+    fmt.Printf(
+        "第 %d 层: 价格=%s 数量=%s 累计均价=%s 累计风险=%s\n",
+        step.Round,
+        step.OrderPrice,
+        step.Quantity,
+        step.AveragePrice,
+        step.CumulativeLoss,
+    )
+}
+```
+
+该模型使用固定点数间距，适用于现货和线性合约。可通过 `EntryFeeRate`、`ExitFeeRate` 和 `SlippagePerUnit` 预留交易成本；币本位反向合约需要使用对应的非线性盈亏公式。
+
 ---
 
 ## 📝 变更日志 (Changelog & Traceability)
+
+### [v0.5.0] - 2026-10-21
+- **新增马丁风险反推**:
+  - `sizing/martingale_risk.go`: 根据首仓价、止损价、固定加仓间距、加仓倍数和最大亏损预算反推基础仓位。
+  - 自动排除止损价及越过止损价的加仓层，支持最大层数限制。
+  - 支持入场/出场手续费率、单位滑点成本和数量步长向下对齐。
+  - 返回完整加仓阶梯、累计数量、累计名义价值、加权均价、风险系数、止损预计亏损和剩余风险预算。
+- **质量保证**:
+  - 覆盖多头、空头、费用、最大层数、数量步长以及非法配置边界测试。
 
 ### [v0.4.0] - 2026-10-19
 - **新增指标模块**:
